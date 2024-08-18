@@ -1,3 +1,23 @@
+bool almost_equals(float a, float b, float epsilon) {
+ return fabs(a - b) <= epsilon;
+}
+
+bool animate_f32_to_target(float* value, float target, float delta_t, float rate) {
+	*value += (target - *value) * (1.0 - pow(2.0f, -rate * delta_t));
+	if (almost_equals(*value, target, 0.001f))
+	{
+		*value = target;
+		return true; // reached
+	}
+	return false;
+}
+
+void animate_v2_to_target(Vector2* value, Vector2 target, float delta_t, float rate) {
+	animate_f32_to_target(&(value->x), target.x, delta_t, rate);
+	animate_f32_to_target(&(value->y), target.y, delta_t, rate);
+}
+
+
 typedef struct Sprite
 {
 	Gfx_Image *image;
@@ -106,7 +126,7 @@ int entry(int argc, char **argv)
 	float64 last_time = os_get_current_time_in_seconds();
 	const float64 fps_limit = 69000;
 	const float64 min_frametime = 1.0 / fps_limit;
-	const float speed = 50.0;
+	const float speed = 65.0;
 
 	world = alloc(get_heap_allocator(), sizeof(World));
 	memset(world, 0, sizeof(World));
@@ -131,14 +151,14 @@ int entry(int argc, char **argv)
 		en->pos = v2(get_random_float32_in_range(-100, 100), get_random_float32_in_range(-100, 100));
 	}
 
+
+	float zoom = 5.3;
+	Vector2 camera_pos = v2(0,0);
+
 	// this while is the game running (every single frame)
 	while (!window.should_close)
 	{
 		reset_temporary_storage();
-
-		draw_frame.projection = m4_make_orthographic_projection(window.width * -0.5, window.width * 0.5, window.height * -0.5, window.height * 0.5, -1, 10);
-		float zoom = 5.3;
-		draw_frame.view = m4_make_scale(v3(1.0 / zoom, 1.0 / zoom, 1.0));
 
 		float64 now = os_get_current_time_in_seconds();
 		if ((int)now != (int)last_time)
@@ -150,7 +170,22 @@ int entry(int argc, char **argv)
 			now = os_get_current_time_in_seconds();
 			delta = now - last_time;
 		}
+		
 		last_time = now;
+
+		draw_frame.projection = m4_make_orthographic_projection(window.width * -0.5, window.width * 0.5, window.height * -0.5, window.height * 0.5, -1, 10);
+
+		// :camera
+		{
+			Vector2 target_pos = player_en->pos;
+			animate_v2_to_target(&camera_pos, target_pos, delta, 25.0f);
+
+			draw_frame.view = m4_make_scale(v3(1.0, 1.0, 1.0));
+			draw_frame.view = m4_mul(draw_frame.view, m4_make_translation(v3(camera_pos.x, camera_pos.y, 0)));
+			draw_frame.view = m4_mul(draw_frame.view, m4_make_scale(v3(1.0 / zoom, 1.0 / zoom, 1.0)));
+		}
+
+
 
 		// :render images for each arch type
 		for (int i = 0; i < MAX_ENTITY_COUNT; i++)
