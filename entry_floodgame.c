@@ -8,24 +8,7 @@ inline float v2_dist(Vector2 a, Vector2 b)
 {
 	return v2_length(v2_sub(a, b));
 }
-
-
-int world_pos_to_tile_pos(float world_pos)
-{
-	return roundf(world_pos / (float)tile_width);
-}
-
-float tile_pos_to_world_pos(int tile_pos)
-{
-	return ((float)tile_pos * (float)tile_width);
-}
-
-Vector2 round_v2_to_tile(Vector2 world_pos)
-{
-	world_pos.x = tile_pos_to_world_pos(world_pos_to_tile_pos(world_pos.x));
-	world_pos.y = tile_pos_to_world_pos(world_pos_to_tile_pos(world_pos.y));
-	return world_pos;
-}
+//^^^ engine changes
 
 bool almost_equals(float a, float b, float epsilon)
 {
@@ -48,6 +31,30 @@ void animate_v2_to_target(Vector2 *value, Vector2 target, float delta_t, float r
 	animate_f32_to_target(&(value->x), target.x, delta_t, rate);
 	animate_f32_to_target(&(value->y), target.y, delta_t, rate);
 }
+
+float sin_breathe(float time, float rate) {
+	return (sin(time * rate) + 1) / 2;
+}
+
+// ^^^ generic utils
+
+int world_pos_to_tile_pos(float world_pos)
+{
+	return roundf(world_pos / (float)tile_width);
+}
+
+float tile_pos_to_world_pos(int tile_pos)
+{
+	return ((float)tile_pos * (float)tile_width);
+}
+
+Vector2 round_v2_to_tile(Vector2 world_pos)
+{
+	world_pos.x = tile_pos_to_world_pos(world_pos_to_tile_pos(world_pos.x));
+	world_pos.y = tile_pos_to_world_pos(world_pos_to_tile_pos(world_pos.y));
+	return world_pos;
+}
+
 
 typedef struct Sprite
 {
@@ -97,6 +104,7 @@ typedef struct Entity
 	int health;
 	//int item_count;
 	bool destroyable_world_item;
+	bool is_item;
 
 } Entity;
 #define MAX_ENTITY_COUNT 1024
@@ -165,6 +173,7 @@ void setup_item_soul(Entity *entity) {
 	entity->arch = arch_item_soul;
 	entity->sprite_id = SPRITE_item_soul;
 	entity->destroyable_world_item = false;
+	entity->is_item = true;
 }
 
 Vector2 screen_to_world()
@@ -389,6 +398,9 @@ int entry(int argc, char **argv)
 				{
 					Sprite *sprite = get_sprite(en->sprite_id);
 					Matrix4 xform = m4_scalar(1.0);
+					if (en->is_item) {
+						xform = m4_translate(xform, v3(0, 2.0 * sin_breathe(os_get_elapsed_seconds(), 5.0), 0));
+					}
 					xform = m4_translate(xform, v3(0, tile_width * -0.5, 0));
 					xform = m4_translate(xform, v3(en->pos.x, en->pos.y, 0));
 					xform = m4_translate(xform, v3(sprite->image->width * -0.5, 0.0, 0));
