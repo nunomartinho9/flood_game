@@ -52,7 +52,6 @@ void animate_v2_to_target(Vector2 *value, Vector2 target, float delta_t, float r
 typedef struct Sprite
 {
 	Gfx_Image *image;
-	Vector2 size;
 
 } Sprite;
 typedef enum SpriteID
@@ -62,6 +61,7 @@ typedef enum SpriteID
 	SPRITE_tree0,
 	SPRITE_tree1,
 	SPRITE_rock0,
+	SPRITE_item_soul,
 	SPRITE_MAX,
 } SpriteID;
 // nuno: maybe we make this an X macro?? https://chatgpt.com/share/260222eb-2738-4d1e-8b1d-4973a097814d
@@ -82,6 +82,8 @@ typedef enum EntityArchetype
 	arch_rock = 1,
 	arch_tree = 2,
 	arch_player = 3,
+	arch_item_soul = 4,
+	ARCH_MAX
 } EntityArchetype;
 
 typedef struct Entity
@@ -154,6 +156,11 @@ void setup_player(Entity *entity)
 	//....
 }
 
+void setup_item_soul(Entity *entity) {
+	entity->arch = arch_item_soul;
+	entity->sprite_id = SPRITE_item_soul;
+}
+
 Vector2 screen_to_world()
 {
 	float mouse_x = input_frame.mouse_x;
@@ -183,6 +190,10 @@ void toggle_game_debug()
 	in_debug = !in_debug;
 }
 
+Vector2 get_sprite_size(Sprite* sprite) {
+	return v2(sprite->image->width, sprite->image->height);
+}
+
 int entry(int argc, char **argv)
 {
 
@@ -201,9 +212,10 @@ int entry(int argc, char **argv)
 	world = alloc(get_heap_allocator(), sizeof(World));
 	memset(world, 0, sizeof(World));
 
-	sprites[SPRITE_player] = (Sprite){.image = load_image_from_disk(fixed_string("player.png"), get_heap_allocator()), .size = v2(14, 17)};
-	sprites[SPRITE_tree0] = (Sprite){.image = load_image_from_disk(fixed_string("tree0.png"), get_heap_allocator()), .size = v2(11, 13)};
-	sprites[SPRITE_rock0] = (Sprite){.image = load_image_from_disk(fixed_string("rock0.png"), get_heap_allocator()), .size = v2(9, 5)};
+	sprites[SPRITE_player] = (Sprite){.image = load_image_from_disk(fixed_string("res/sprites/player.png"), get_heap_allocator()), };
+	sprites[SPRITE_tree0] = (Sprite){.image = load_image_from_disk(fixed_string("res/sprites/tree0.png"), get_heap_allocator()), };
+	sprites[SPRITE_rock0] = (Sprite){.image = load_image_from_disk(fixed_string("res/sprites/rock0.png"), get_heap_allocator()), };
+	sprites[SPRITE_item_soul] = (Sprite){.image = load_image_from_disk(fixed_string("res/sprites/soul.png"), get_heap_allocator()), };
 
 	Gfx_Font *font = load_font_from_disk(STR("C:/windows/fonts/arial.ttf"), get_heap_allocator());
 	assert(font, "Failed to load arial.ttf", GetLastError());
@@ -358,7 +370,7 @@ int entry(int argc, char **argv)
 					Matrix4 xform = m4_scalar(1.0);
 					xform = m4_translate(xform, v3(0, tile_width * -0.5, 0));
 					xform = m4_translate(xform, v3(en->pos.x, en->pos.y, 0));
-					xform = m4_translate(xform, v3(sprite->size.x * -0.5, 0.0, 0));
+					xform = m4_translate(xform, v3(sprite->image->width * -0.5, 0.0, 0));
 
 					Vector4 color = COLOR_WHITE;
 
@@ -366,7 +378,7 @@ int entry(int argc, char **argv)
 					{
 						color = COLOR_RED;
 					}
-					draw_image_xform(sprite->image, xform, sprite->size, color);
+					draw_image_xform(sprite->image, xform, get_sprite_size(sprite), color);
 
 					if (in_debug)
 					{
