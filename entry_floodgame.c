@@ -1,11 +1,14 @@
 #include "./range_n.c"
+const int tile_width = 8;
+const float entity_selection_radius = 16.0f;
+const int rock_health = 5;
+const int tree_health = 3;
 
-inline float v2_dist(Vector2 a, Vector2 b){
+inline float v2_dist(Vector2 a, Vector2 b)
+{
 	return v2_length(v2_sub(a, b));
 }
 
-const int tile_width = 8;
-const float entity_selection_radius = 16.0f;
 
 int world_pos_to_tile_pos(float world_pos)
 {
@@ -89,6 +92,7 @@ typedef struct Entity
 
 	bool render_sprite;
 	SpriteID sprite_id;
+	int health;
 
 } Entity;
 #define MAX_ENTITY_COUNT 1024
@@ -99,8 +103,9 @@ typedef struct World
 } World;
 World *world = 0;
 
-typedef struct WorldFrame {
-	Entity* selected_entity;
+typedef struct WorldFrame
+{
+	Entity *selected_entity;
 } WorldFrame;
 WorldFrame world_frame;
 
@@ -130,6 +135,7 @@ void setup_rock(Entity *entity)
 {
 	entity->arch = arch_rock;
 	entity->sprite_id = SPRITE_rock0;
+	entity->health = rock_health;
 	//....
 }
 
@@ -137,6 +143,7 @@ void setup_tree(Entity *entity)
 {
 	entity->arch = arch_tree;
 	entity->sprite_id = SPRITE_tree0;
+	entity->health = tree_health;
 	//....
 }
 
@@ -232,8 +239,12 @@ int entry(int argc, char **argv)
 		reset_temporary_storage();
 		world_frame = (WorldFrame){0};
 		float64 now = os_get_elapsed_seconds();
-		if ((int)now != (int)last_time)
-			log("%.2f FPS\n%.2fms", 1.0 / (now - last_time), (now - last_time) * 1000); // fps
+		if (in_debug)
+		{
+			if ((int)now != (int)last_time)
+				log("%.2f FPS\n%.2fms", 1.0 / (now - last_time), (now - last_time) * 1000); //show fps
+		}
+
 		float64 delta = now - last_time;
 		if (delta < min_frametime)
 		{
@@ -256,7 +267,7 @@ int entry(int argc, char **argv)
 			draw_frame.camera_xform = m4_mul(draw_frame.camera_xform, m4_make_scale(v3(1.0 / zoom, 1.0 / zoom, 1.0)));
 		}
 
-		// :mouse hover entity
+		// :select entity
 		Vector2 mouse_pos_world = screen_to_world();
 		int mouse_tile_x = world_pos_to_tile_pos(mouse_pos_world.x);
 		int mouse_tile_y = world_pos_to_tile_pos(mouse_pos_world.y);
@@ -268,37 +279,25 @@ int entry(int argc, char **argv)
 				draw_text(font, sprint(get_temporary_allocator(), "%f, %f", mouse_pos_world.x, mouse_pos_world.y), font_height, mouse_pos_world, v2(0.1, 0.1), COLOR_RED);
 			}
 
-			
 			float smallest_dist = INFINITY;
 			for (int i = 0; i < MAX_ENTITY_COUNT; i++)
 			{
 				Entity *en = &world->entities[i];
-				if (en->is_valid) {
+				if (en->is_valid)
+				{
 					Sprite *sprite = get_sprite(en->sprite_id);
 					int entity_tile_x = world_pos_to_tile_pos(en->pos.x);
 					int entity_tile_y = world_pos_to_tile_pos(en->pos.y);
 					float dist = fabsf(v2_dist(en->pos, mouse_pos_world));
-					if (dist < entity_selection_radius) {
-						
-						if (!world_frame.selected_entity || (dist < smallest_dist)){
+					if (dist < entity_selection_radius)
+					{
+
+						if (!world_frame.selected_entity || (dist < smallest_dist))
+						{
 							world_frame.selected_entity = en;
 							smallest_dist = dist;
 						}
-						// draw_rect(v2(tile_pos_to_world_pos(entity_tile_x) + tile_width * -0.5, tile_pos_to_world_pos(entity_tile_y) + tile_width * -0.5), v2(tile_width, tile_width), v4(0.5, 0.5, 0.5, 0.5));
 					}
-
-					/* 					
-										Range2f bounds = range2f_make_bottom_center(sprite->size);
-										bounds = range2f_shift(bounds, en->pos);
-										bounds.min = v2_sub(bounds.min, v2(10.0, 10.0));
-										bounds.max = v2_add(bounds.max, v2(10.0, 10.0));
-										Vector4 col = COLOR_RED;
-										col.a = 0.4;
-										if (range2f_contains(bounds, mouse_pos_world))
-										{
-											col.a = 1.0;
-										}
-										draw_rect(bounds.min, range2f_size(bounds), col); */
 				}
 			}
 		}
@@ -326,6 +325,23 @@ int entry(int argc, char **argv)
 			// draw_rect(v2(tile_pos_to_world_pos(mouse_tile_x) + tile_width * -0.5, tile_pos_to_world_pos(mouse_tile_y) + tile_width * -0.5), v2(tile_width, tile_width), v4(0.5, 0.5, 0.5, 0.5));
 		}
 
+		// :click items
+		{
+			Entity* selected_en = world_frame.selected_entity;
+			if (is_key_just_pressed(MOUSE_BUTTON_LEFT))
+			{
+				log("pressed left mb");
+				consume_key_just_pressed(MOUSE_BUTTON_LEFT);
+
+				if (selected_en) {
+					selected_en->health -= 1;
+					if (selected_en->health <= 0) {
+						entity_destroy(selected_en);
+					}
+				}
+			}
+		}
+
 		// :render images for each arch type
 		for (int i = 0; i < MAX_ENTITY_COUNT; i++)
 		{
@@ -346,7 +362,8 @@ int entry(int argc, char **argv)
 
 					Vector4 color = COLOR_WHITE;
 
-					if (world_frame.selected_entity == en) {
+					if (world_frame.selected_entity == en)
+					{
 						color = COLOR_RED;
 					}
 					draw_image_xform(sprite->image, xform, sprite->size, color);

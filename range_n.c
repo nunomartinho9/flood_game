@@ -36,3 +36,19 @@ Vector2 range2f_size(Range2f range) {
 bool range2f_contains(Range2f range, Vector2 v) {
   return v.x >= range.min.x && v.x <= range.max.x && v.y >= range.min.y && v.y <= range.max.y;
 }
+
+// :example
+
+
+					/* 					
+										Range2f bounds = range2f_make_bottom_center(sprite->size);
+										bounds = range2f_shift(bounds, en->pos);
+										bounds.min = v2_sub(bounds.min, v2(10.0, 10.0));
+										bounds.max = v2_add(bounds.max, v2(10.0, 10.0));
+										Vector4 col = COLOR_RED;
+										col.a = 0.4;
+										if (range2f_contains(bounds, mouse_pos_world))
+										{
+											col.a = 1.0;
+										}
+										draw_rect(bounds.min, range2f_size(bounds), col); */
