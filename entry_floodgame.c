@@ -95,6 +95,8 @@ typedef struct Entity
 	bool render_sprite;
 	SpriteID sprite_id;
 	int health;
+	//int item_count;
+	bool destroyable_world_item;
 
 } Entity;
 #define MAX_ENTITY_COUNT 1024
@@ -138,6 +140,7 @@ void setup_rock(Entity *entity)
 	entity->arch = arch_rock;
 	entity->sprite_id = SPRITE_rock0;
 	entity->health = rock_health;
+	entity->destroyable_world_item = true;
 	//....
 }
 
@@ -146,6 +149,7 @@ void setup_tree(Entity *entity)
 	entity->arch = arch_tree;
 	entity->sprite_id = SPRITE_tree0;
 	entity->health = tree_health;
+	entity->destroyable_world_item = true;
 	//....
 }
 
@@ -153,12 +157,14 @@ void setup_player(Entity *entity)
 {
 	entity->arch = arch_player;
 	entity->sprite_id = SPRITE_player;
+	entity->destroyable_world_item = false;
 	//....
 }
 
 void setup_item_soul(Entity *entity) {
 	entity->arch = arch_item_soul;
 	entity->sprite_id = SPRITE_item_soul;
+	entity->destroyable_world_item = false;
 }
 
 Vector2 screen_to_world()
@@ -295,7 +301,7 @@ int entry(int argc, char **argv)
 			for (int i = 0; i < MAX_ENTITY_COUNT; i++)
 			{
 				Entity *en = &world->entities[i];
-				if (en->is_valid)
+				if (en->is_valid && en->destroyable_world_item)
 				{
 					Sprite *sprite = get_sprite(en->sprite_id);
 					int entity_tile_x = world_pos_to_tile_pos(en->pos.x);
@@ -348,7 +354,22 @@ int entry(int argc, char **argv)
 				if (selected_en) {
 					selected_en->health -= 1;
 					if (selected_en->health <= 0) {
+						switch(selected_en->arch) {
+							case arch_tree: {
+								Entity* en = entity_create();
+								setup_item_soul(en);
+								// en->item_count = 3;
+								en->pos = selected_en->pos;
+								break;
+							}
+
+							default: break;
+						}
+						
+						
 						entity_destroy(selected_en);
+
+
 					}
 				}
 			}
