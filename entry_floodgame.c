@@ -1,4 +1,11 @@
+#include "./range_n.c"
+
+inline float v2_dist(Vector2 a, Vector2 b){
+	return v2_length(v2_sub(a, b));
+}
+
 const int tile_width = 8;
+const float entity_selection_radius = 16.0f;
 
 int world_pos_to_tile_pos(float world_pos)
 {
@@ -92,6 +99,11 @@ typedef struct World
 } World;
 World *world = 0;
 
+typedef struct WorldFrame {
+	Entity* selected_entity;
+} WorldFrame;
+WorldFrame world_frame;
+
 Entity *entity_create()
 {
 	Entity *entity_found = 0;
@@ -141,7 +153,7 @@ Vector2 screen_to_world()
 	float mouse_y = input_frame.mouse_y;
 
 	Matrix4 proj = draw_frame.projection;
-	Matrix4 view = draw_frame.view;
+	Matrix4 view = draw_frame.camera_xform;
 	float window_w = window.width;
 	float window_h = window.height;
 
@@ -174,7 +186,7 @@ int entry(int argc, char **argv)
 	window.y = 90;
 	window.clear_color = hex_to_rgba(0x0b0b0bff);
 
-	float64 last_time = os_get_current_time_in_seconds();
+	float64 last_time = os_get_elapsed_seconds();
 	const float64 fps_limit = 69000;
 	const float64 min_frametime = 1.0 / fps_limit;
 	const float speed = 65.0;
@@ -190,6 +202,7 @@ int entry(int argc, char **argv)
 	assert(font, "Failed to load arial.ttf", GetLastError());
 	const u32 font_height = 32;
 
+	// :entity setup
 	Entity *player_en = entity_create();
 	setup_player(player_en);
 	for (int i = 0; i < 10; i++)
@@ -198,7 +211,7 @@ int entry(int argc, char **argv)
 		setup_rock(en);
 		en->pos = v2(get_random_float32_in_range(-100, 100), get_random_float32_in_range(-100, 100));
 		en->pos = round_v2_to_tile(en->pos);
-		en->pos.y -= tile_width * 0.5;
+		// en->pos.y -= tile_width * 0.5;
 	}
 
 	for (int i = 0; i < 4; i++)
@@ -207,7 +220,7 @@ int entry(int argc, char **argv)
 		setup_tree(en);
 		en->pos = v2(get_random_float32_in_range(-100, 100), get_random_float32_in_range(-100, 100));
 		en->pos = round_v2_to_tile(en->pos);
-		en->pos.y -= tile_width * 0.5;
+		// en->pos.y -= tile_width * 0.5;
 	}
 
 	float zoom = 5.3;
@@ -217,15 +230,15 @@ int entry(int argc, char **argv)
 	while (!window.should_close)
 	{
 		reset_temporary_storage();
-
-		float64 now = os_get_current_time_in_seconds();
+		world_frame = (WorldFrame){0};
+		float64 now = os_get_elapsed_seconds();
 		if ((int)now != (int)last_time)
 			log("%.2f FPS\n%.2fms", 1.0 / (now - last_time), (now - last_time) * 1000); // fps
 		float64 delta = now - last_time;
 		if (delta < min_frametime)
 		{
 			os_high_precision_sleep((min_frametime - delta) * 1000.0);
-			now = os_get_current_time_in_seconds();
+			now = os_get_elapsed_seconds();
 			delta = now - last_time;
 		}
 
@@ -238,38 +251,54 @@ int entry(int argc, char **argv)
 			Vector2 target_pos = player_en->pos;
 			animate_v2_to_target(&camera_pos, target_pos, delta, 25.0f);
 
-			draw_frame.view = m4_make_scale(v3(1.0, 1.0, 1.0));
-			draw_frame.view = m4_mul(draw_frame.view, m4_make_translation(v3(camera_pos.x, camera_pos.y, 0)));
-			draw_frame.view = m4_mul(draw_frame.view, m4_make_scale(v3(1.0 / zoom, 1.0 / zoom, 1.0)));
+			draw_frame.camera_xform = m4_make_scale(v3(1.0, 1.0, 1.0));
+			draw_frame.camera_xform = m4_mul(draw_frame.camera_xform, m4_make_translation(v3(camera_pos.x, camera_pos.y, 0)));
+			draw_frame.camera_xform = m4_mul(draw_frame.camera_xform, m4_make_scale(v3(1.0 / zoom, 1.0 / zoom, 1.0)));
 		}
 
 		// :mouse hover entity
-			Vector2 mouse_pos = screen_to_world();
-			int mouse_tile_x = world_pos_to_tile_pos(mouse_pos.x);
-			int mouse_tile_y = world_pos_to_tile_pos(mouse_pos.y);
+		Vector2 mouse_pos_world = screen_to_world();
+		int mouse_tile_x = world_pos_to_tile_pos(mouse_pos_world.x);
+		int mouse_tile_y = world_pos_to_tile_pos(mouse_pos_world.y);
 		{
 
 			if (in_debug)
 			{
-				log("%f, %f", mouse_pos.x, mouse_pos.y);
-				draw_text(font, sprint(get_temporary_allocator(), "%f, %f", mouse_pos.x, mouse_pos.y), font_height, mouse_pos, v2(0.1, 0.1), COLOR_RED);
+				log("%f, %f", mouse_pos_world.x, mouse_pos_world.y);
+				draw_text(font, sprint(get_temporary_allocator(), "%f, %f", mouse_pos_world.x, mouse_pos_world.y), font_height, mouse_pos_world, v2(0.1, 0.1), COLOR_RED);
 			}
 
+			
+			float smallest_dist = INFINITY;
 			for (int i = 0; i < MAX_ENTITY_COUNT; i++)
 			{
 				Entity *en = &world->entities[i];
-				if (en->is_valid)
-				{
+				if (en->is_valid) {
 					Sprite *sprite = get_sprite(en->sprite_id);
-					Range2f bounds = range2f_make_bottom_center(sprite->size);
-					bounds = range2f_shift(bounds, en->pos);
-					Vector4 col = COLOR_RED;
-					col.a = 0.4;
-					if (range2f_contains(bounds, mouse_pos))
-					{
-						col.a = 1.0;
+					int entity_tile_x = world_pos_to_tile_pos(en->pos.x);
+					int entity_tile_y = world_pos_to_tile_pos(en->pos.y);
+					float dist = fabsf(v2_dist(en->pos, mouse_pos_world));
+					if (dist < entity_selection_radius) {
+						
+						if (!world_frame.selected_entity || (dist < smallest_dist)){
+							world_frame.selected_entity = en;
+							smallest_dist = dist;
+						}
+						// draw_rect(v2(tile_pos_to_world_pos(entity_tile_x) + tile_width * -0.5, tile_pos_to_world_pos(entity_tile_y) + tile_width * -0.5), v2(tile_width, tile_width), v4(0.5, 0.5, 0.5, 0.5));
 					}
-					draw_rect(bounds.min, range2f_size(bounds), col);
+
+					/* 					
+										Range2f bounds = range2f_make_bottom_center(sprite->size);
+										bounds = range2f_shift(bounds, en->pos);
+										bounds.min = v2_sub(bounds.min, v2(10.0, 10.0));
+										bounds.max = v2_add(bounds.max, v2(10.0, 10.0));
+										Vector4 col = COLOR_RED;
+										col.a = 0.4;
+										if (range2f_contains(bounds, mouse_pos_world))
+										{
+											col.a = 1.0;
+										}
+										draw_rect(bounds.min, range2f_size(bounds), col); */
 				}
 			}
 		}
@@ -287,14 +316,14 @@ int entry(int argc, char **argv)
 					if ((x + (y % 2 == 0)) % 2 == 0)
 					{
 						Vector4 col = v4(0.1, 0.1, 0.1, 0.1);
-						float x_pos = x * tile_width;
 						float y_pos = y * tile_width;
+						float x_pos = x * tile_width;
 						draw_rect(v2(x_pos + tile_width * -0.5, y_pos + tile_width * -0.5), v2(tile_width, tile_width), col);
 					}
 				}
 			}
 
-			draw_rect(v2(tile_pos_to_world_pos(mouse_tile_x) + tile_width * -0.5, tile_pos_to_world_pos(mouse_tile_y) + tile_width * -0.5), v2(tile_width, tile_width), v4(0.5, 0.5, 0.5, 0.5));
+			// draw_rect(v2(tile_pos_to_world_pos(mouse_tile_x) + tile_width * -0.5, tile_pos_to_world_pos(mouse_tile_y) + tile_width * -0.5), v2(tile_width, tile_width), v4(0.5, 0.5, 0.5, 0.5));
 		}
 
 		// :render images for each arch type
@@ -311,9 +340,16 @@ int entry(int argc, char **argv)
 				{
 					Sprite *sprite = get_sprite(en->sprite_id);
 					Matrix4 xform = m4_scalar(1.0);
+					xform = m4_translate(xform, v3(0, tile_width * -0.5, 0));
 					xform = m4_translate(xform, v3(en->pos.x, en->pos.y, 0));
 					xform = m4_translate(xform, v3(sprite->size.x * -0.5, 0.0, 0));
-					draw_image_xform(sprite->image, xform, sprite->size, COLOR_WHITE);
+
+					Vector4 color = COLOR_WHITE;
+
+					if (world_frame.selected_entity == en) {
+						color = COLOR_RED;
+					}
+					draw_image_xform(sprite->image, xform, sprite->size, color);
 
 					if (in_debug)
 					{
