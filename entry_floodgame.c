@@ -3,6 +3,8 @@ const int tile_width = 8;
 const float entity_selection_radius = 16.0f;
 const int rock_health = 5;
 const int tree_health = 3;
+const float player_pickup_radius = 20.0f;
+// ^^^ constanst and global vars
 
 inline float v2_dist(Vector2 a, Vector2 b)
 {
@@ -32,7 +34,8 @@ void animate_v2_to_target(Vector2 *value, Vector2 target, float delta_t, float r
 	animate_f32_to_target(&(value->y), target.y, delta_t, rate);
 }
 
-float sin_breathe(float time, float rate) {
+float sin_breathe(float time, float rate)
+{
 	return (sin(time * rate) + 1) / 2;
 }
 
@@ -54,7 +57,6 @@ Vector2 round_v2_to_tile(Vector2 world_pos)
 	world_pos.y = tile_pos_to_world_pos(world_pos_to_tile_pos(world_pos.y));
 	return world_pos;
 }
-
 
 typedef struct Sprite
 {
@@ -102,15 +104,23 @@ typedef struct Entity
 	bool render_sprite;
 	SpriteID sprite_id;
 	int health;
-	//int item_count;
+	// int item_count;
 	bool destroyable_world_item;
 	bool is_item;
 
 } Entity;
 #define MAX_ENTITY_COUNT 1024
+
+typedef struct ItemData
+{
+	int amount;
+} ItemData;
+
+// :world
 typedef struct World
 {
 	Entity entities[MAX_ENTITY_COUNT];
+	ItemData inventory_items[ARCH_MAX];
 
 } World;
 World *world = 0;
@@ -169,7 +179,8 @@ void setup_player(Entity *entity)
 	//....
 }
 
-void setup_item_soul(Entity *entity) {
+void setup_item_soul(Entity *entity)
+{
 	entity->arch = arch_item_soul;
 	entity->sprite_id = SPRITE_item_soul;
 	entity->destroyable_world_item = false;
@@ -205,7 +216,8 @@ void toggle_game_debug()
 	in_debug = !in_debug;
 }
 
-Vector2 get_sprite_size(Sprite* sprite) {
+Vector2 get_sprite_size(Sprite *sprite)
+{
 	return v2(sprite->image->width, sprite->image->height);
 }
 
@@ -227,18 +239,29 @@ int entry(int argc, char **argv)
 	world = alloc(get_heap_allocator(), sizeof(World));
 	memset(world, 0, sizeof(World));
 
-	sprites[SPRITE_player] = (Sprite){.image = load_image_from_disk(fixed_string("res/sprites/player.png"), get_heap_allocator()), };
-	sprites[SPRITE_tree0] = (Sprite){.image = load_image_from_disk(fixed_string("res/sprites/tree0.png"), get_heap_allocator()), };
-	sprites[SPRITE_rock0] = (Sprite){.image = load_image_from_disk(fixed_string("res/sprites/rock0.png"), get_heap_allocator()), };
-	sprites[SPRITE_item_soul] = (Sprite){.image = load_image_from_disk(fixed_string("res/sprites/soul.png"), get_heap_allocator()), };
+	sprites[SPRITE_player] = (Sprite){
+		.image = load_image_from_disk(fixed_string("res/sprites/player.png"), get_heap_allocator()),
+	};
+	sprites[SPRITE_tree0] = (Sprite){
+		.image = load_image_from_disk(fixed_string("res/sprites/tree0.png"), get_heap_allocator()),
+	};
+	sprites[SPRITE_rock0] = (Sprite){
+		.image = load_image_from_disk(fixed_string("res/sprites/rock0.png"), get_heap_allocator()),
+	};
+	sprites[SPRITE_item_soul] = (Sprite){
+		.image = load_image_from_disk(fixed_string("res/sprites/soul.png"), get_heap_allocator()),
+	};
 
 	Gfx_Font *font = load_font_from_disk(STR("C:/windows/fonts/arial.ttf"), get_heap_allocator());
 	assert(font, "Failed to load arial.ttf", GetLastError());
 	const u32 font_height = 32;
 
-	// :entity setup
+	// :init
 	Entity *player_en = entity_create();
 	setup_player(player_en);
+
+	world->inventory_items[arch_item_soul].amount = 4;
+
 	for (int i = 0; i < 10; i++)
 	{
 		Entity *en = entity_create();
@@ -269,7 +292,7 @@ int entry(int argc, char **argv)
 		if (in_debug)
 		{
 			if ((int)now != (int)last_time)
-				log("%.2f FPS\n%.2fms", 1.0 / (now - last_time), (now - last_time) * 1000); //show fps
+				log("%.2f FPS\n%.2fms", 1.0 / (now - last_time), (now - last_time) * 1000); // show fps
 		}
 
 		float64 delta = now - last_time;
@@ -352,33 +375,58 @@ int entry(int argc, char **argv)
 			// draw_rect(v2(tile_pos_to_world_pos(mouse_tile_x) + tile_width * -0.5, tile_pos_to_world_pos(mouse_tile_y) + tile_width * -0.5), v2(tile_width, tile_width), v4(0.5, 0.5, 0.5, 0.5));
 		}
 
-		// :click items
+		// :update entities
 		{
-			Entity* selected_en = world_frame.selected_entity;
+			for (int i = 0; i < MAX_ENTITY_COUNT; i++)
+			{
+				Entity *en = &world->entities[i];
+				if (en->is_valid)
+				{
+					// pick up item
+					if (en->is_item)
+					{
+						// TODO: epic physics pickup like arcana
+
+							if (fabsf(v2_dist(en->pos, player_en->pos)) < player_pickup_radius)
+							{
+								world->inventory_items[en->arch].amount += 1;
+								entity_destroy(en);
+							}
+						
+					}
+				}
+			}
+		}
+
+		// :click destroy
+		{
+			Entity *selected_en = world_frame.selected_entity;
 			if (is_key_just_pressed(MOUSE_BUTTON_LEFT))
 			{
 				log("pressed left mb");
 				consume_key_just_pressed(MOUSE_BUTTON_LEFT);
 
-				if (selected_en) {
+				if (selected_en)
+				{
 					selected_en->health -= 1;
-					if (selected_en->health <= 0) {
-						switch(selected_en->arch) {
-							case arch_tree: {
-								Entity* en = entity_create();
-								setup_item_soul(en);
-								// en->item_count = 3;
-								en->pos = selected_en->pos;
-								break;
-							}
-
-							default: break;
+					if (selected_en->health <= 0)
+					{
+						switch (selected_en->arch)
+						{
+						case arch_tree:
+						{
+							Entity *en = entity_create();
+							setup_item_soul(en);
+							// en->item_count = 3;
+							en->pos = selected_en->pos;
+							break;
 						}
-						
-						
+
+						default:
+							break;
+						}
+
 						entity_destroy(selected_en);
-
-
 					}
 				}
 			}
@@ -398,7 +446,8 @@ int entry(int argc, char **argv)
 				{
 					Sprite *sprite = get_sprite(en->sprite_id);
 					Matrix4 xform = m4_scalar(1.0);
-					if (en->is_item) {
+					if (en->is_item)
+					{
 						xform = m4_translate(xform, v3(0, 2.0 * sin_breathe(os_get_elapsed_seconds(), 5.0), 0));
 					}
 					xform = m4_translate(xform, v3(0, tile_width * -0.5, 0));
