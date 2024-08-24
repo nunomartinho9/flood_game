@@ -3,7 +3,8 @@ const int tile_width = 8;
 const float entity_selection_radius = 16.0f;
 const int rock_health = 5;
 const int tree_health = 3;
-const float player_pickup_radius = 20.0f;
+const float player_pickup_radius = 8.0f;
+const float player_succ_radius = 50.0f;
 // ^^^ constanst and global vars
 
 inline float v2_dist(Vector2 a, Vector2 b)
@@ -17,9 +18,13 @@ bool almost_equals(float a, float b, float epsilon)
 	return fabs(a - b) <= epsilon;
 }
 
-bool animate_f32_to_target(float *value, float target, float delta_t, float rate)
+bool animate_f32_to_target(float *value, float target, float delta_t, float rate, float acceleration)
 {
-	*value += (target - *value) * (1.0 - pow(2.0f, -rate * delta_t));
+	float dist = fabsf(target - *value);
+
+	float adjusted_rate = rate + acceleration * dist;
+	
+	*value += (target - *value) * (1.0 - pow(2.0f, -adjusted_rate * delta_t));
 	if (almost_equals(*value, target, 0.001f))
 	{
 		*value = target;
@@ -28,10 +33,10 @@ bool animate_f32_to_target(float *value, float target, float delta_t, float rate
 	return false;
 }
 
-void animate_v2_to_target(Vector2 *value, Vector2 target, float delta_t, float rate)
+void animate_v2_to_target(Vector2 *value, Vector2 target, float delta_t, float rate, float acceleration)
 {
-	animate_f32_to_target(&(value->x), target.x, delta_t, rate);
-	animate_f32_to_target(&(value->y), target.y, delta_t, rate);
+	animate_f32_to_target(&(value->x), target.x, delta_t, rate, acceleration);
+	animate_f32_to_target(&(value->y), target.y, delta_t, rate, acceleration);
 }
 
 float sin_breathe(float time, float rate)
@@ -310,7 +315,7 @@ int entry(int argc, char **argv)
 		// :camera
 		{
 			Vector2 target_pos = player_en->pos;
-			animate_v2_to_target(&camera_pos, target_pos, delta, 25.0f);
+			animate_v2_to_target(&camera_pos, target_pos, delta, 25.0f, 0.0f);
 
 			draw_frame.camera_xform = m4_make_scale(v3(1.0, 1.0, 1.0));
 			draw_frame.camera_xform = m4_mul(draw_frame.camera_xform, m4_make_translation(v3(camera_pos.x, camera_pos.y, 0)));
@@ -387,12 +392,16 @@ int entry(int argc, char **argv)
 					{
 						// TODO: epic physics pickup like arcana
 
-							if (fabsf(v2_dist(en->pos, player_en->pos)) < player_pickup_radius)
-							{
-								world->inventory_items[en->arch].amount += 1;
-								entity_destroy(en);
-							}
-						
+						// :pickup
+						if (fabsf(v2_dist(en->pos, player_en->pos)) < player_succ_radius)
+						{
+							animate_v2_to_target(&en->pos, player_en->pos, delta, 8.0f, 0.1f);
+						}
+						if (fabsf(v2_dist(en->pos, player_en->pos)) < player_pickup_radius)
+						{
+							world->inventory_items[en->arch].amount += 1;
+							entity_destroy(en);
+						}
 					}
 				}
 			}
