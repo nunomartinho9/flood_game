@@ -1,29 +1,56 @@
 #include "./range_n.c"
+
+// :tweaks
+Vector4 bg_box_col = {0, 0, 0, 0.5};
 const int tile_width = 8;
 const float entity_selection_radius = 16.0f;
 const int rock_health = 5;
 const int tree_health = 3;
 const float player_pickup_radius = 8.0f;
 const float player_succ_radius = 50.0f;
-// ^^^ constanst and global vars
+// ^^^ constants and global vars
+#define m4_identity m4_make_scale(v3(1, 1, 1))
 
 inline float v2_dist(Vector2 a, Vector2 b)
 {
 	return v2_length(v2_sub(a, b));
 }
+
 //^^^ engine changes
+
+// the scuff zone
+
+Draw_Quad ndc_quad_to_screen_quad(Draw_Quad ndc_quad)
+{
+
+	// NOTE: we're assuming these are the screen space matricies.
+	Matrix4 proj = draw_frame.projection;
+	Matrix4 view = draw_frame.camera_xform;
+
+	Matrix4 ndc_to_screen_space = m4_identity;
+	ndc_to_screen_space = m4_mul(ndc_to_screen_space, m4_inverse(proj));
+	ndc_to_screen_space = m4_mul(ndc_to_screen_space, view);
+
+	ndc_quad.bottom_left = m4_transform(ndc_to_screen_space, v4(v2_expand(ndc_quad.bottom_left), 0, 1)).xy;
+	ndc_quad.bottom_right = m4_transform(ndc_to_screen_space, v4(v2_expand(ndc_quad.bottom_right), 0, 1)).xy;
+	ndc_quad.top_left = m4_transform(ndc_to_screen_space, v4(v2_expand(ndc_quad.top_left), 0, 1)).xy;
+	ndc_quad.top_right = m4_transform(ndc_to_screen_space, v4(v2_expand(ndc_quad.top_right), 0, 1)).xy;
+
+	return ndc_quad;
+}
 
 bool almost_equals(float a, float b, float epsilon)
 {
 	return fabs(a - b) <= epsilon;
 }
 
+// nuno: included an acceleration factor but it doenst work quite well, in the future physics is the wae
 bool animate_f32_to_target(float *value, float target, float delta_t, float rate, float acceleration)
 {
-	float dist = fabsf(target - *value);
+	float distance = fabsf(target - *value);
 
-	float adjusted_rate = rate + acceleration * dist;
-	
+	float adjusted_rate = rate + acceleration * distance;
+
 	*value += (target - *value) * (1.0 - pow(2.0f, -adjusted_rate * delta_t));
 	if (almost_equals(*value, target, 0.001f))
 	{
@@ -32,7 +59,6 @@ bool animate_f32_to_target(float *value, float target, float delta_t, float rate
 	}
 	return false;
 }
-
 void animate_v2_to_target(Vector2 *value, Vector2 target, float delta_t, float rate, float acceleration)
 {
 	animate_f32_to_target(&(value->x), target.x, delta_t, rate, acceleration);
@@ -42,6 +68,11 @@ void animate_v2_to_target(Vector2 *value, Vector2 target, float delta_t, float r
 float sin_breathe(float time, float rate)
 {
 	return (sin(time * rate) + 1) / 2;
+}
+
+Range2f quad_to_range(Draw_Quad quad)
+{
+	return (Range2f){quad.bottom_left, quad.top_right};
 }
 
 // ^^^ generic utils
@@ -121,11 +152,20 @@ typedef struct ItemData
 	int amount;
 } ItemData;
 
+typedef enum UXState
+{
+	UX_nil,
+	UX_inventory,
+} UXState;
+
 // :world
 typedef struct World
 {
 	Entity entities[MAX_ENTITY_COUNT];
 	ItemData inventory_items[ARCH_MAX];
+	UXState ux_state;
+	float inventory_alpha;
+	float inventory_alpha_target;
 
 } World;
 World *world = 0;
@@ -192,6 +232,45 @@ void setup_item_soul(Entity *entity)
 	entity->is_item = true;
 }
 
+SpriteID get_sprite_id_from_archetype(EntityArchetype arch)
+{
+	switch (arch)
+	{
+	case arch_item_soul:
+		return SPRITE_item_soul;
+		break;
+	default:
+		return 0;
+	}
+}
+
+string get_archetype_pretty_name(EntityArchetype arch)
+{
+	switch (arch)
+	{
+	case arch_item_soul:
+		return STR("Echos of Lament");
+	default:
+		return STR("nil");
+	}
+}
+
+Vector2 get_mouse_pos_in_ndc()
+{
+	float mouse_x = input_frame.mouse_x;
+	float mouse_y = input_frame.mouse_y;
+	Matrix4 proj = draw_frame.projection;
+	Matrix4 view = draw_frame.camera_xform;
+	float window_w = window.width;
+	float window_h = window.height;
+
+	// Normalize the mouse coordinates
+	float ndc_x = (mouse_x / (window_w * 0.5f)) - 1.0f;
+	float ndc_y = (mouse_y / (window_h * 0.5f)) - 1.0f;
+
+	return (Vector2){ndc_x, ndc_y};
+}
+
 Vector2 screen_to_world()
 {
 	float mouse_x = input_frame.mouse_x;
@@ -244,17 +323,18 @@ int entry(int argc, char **argv)
 	world = alloc(get_heap_allocator(), sizeof(World));
 	memset(world, 0, sizeof(World));
 
+	sprites[0] = (Sprite){.image = load_image_from_disk(STR("res/sprites/missing_tex.png"), get_heap_allocator())};
 	sprites[SPRITE_player] = (Sprite){
-		.image = load_image_from_disk(fixed_string("res/sprites/player.png"), get_heap_allocator()),
+		.image = load_image_from_disk(STR("res/sprites/player.png"), get_heap_allocator()),
 	};
 	sprites[SPRITE_tree0] = (Sprite){
-		.image = load_image_from_disk(fixed_string("res/sprites/tree0.png"), get_heap_allocator()),
+		.image = load_image_from_disk(STR("res/sprites/tree0.png"), get_heap_allocator()),
 	};
 	sprites[SPRITE_rock0] = (Sprite){
-		.image = load_image_from_disk(fixed_string("res/sprites/rock0.png"), get_heap_allocator()),
+		.image = load_image_from_disk(STR("res/sprites/rock0.png"), get_heap_allocator()),
 	};
 	sprites[SPRITE_item_soul] = (Sprite){
-		.image = load_image_from_disk(fixed_string("res/sprites/soul.png"), get_heap_allocator()),
+		.image = load_image_from_disk(STR("res/sprites/soul.png"), get_heap_allocator()),
 	};
 
 	Gfx_Font *font = load_font_from_disk(STR("C:/windows/fonts/arial.ttf"), get_heap_allocator());
@@ -395,7 +475,7 @@ int entry(int argc, char **argv)
 						// :pickup
 						if (fabsf(v2_dist(en->pos, player_en->pos)) < player_succ_radius)
 						{
-							animate_v2_to_target(&en->pos, player_en->pos, delta, 8.0f, 0.1f);
+							animate_v2_to_target(&en->pos, player_en->pos, delta, 5.0f, 0.4f);
 						}
 						if (fabsf(v2_dist(en->pos, player_en->pos)) < player_pickup_radius)
 						{
@@ -441,7 +521,7 @@ int entry(int argc, char **argv)
 			}
 		}
 
-		// :render images for each arch type
+		// :render entities
 		for (int i = 0; i < MAX_ENTITY_COUNT; i++)
 		{
 			Entity *en = &world->entities[i];
@@ -477,6 +557,155 @@ int entry(int argc, char **argv)
 					}
 				}
 				break;
+				}
+			}
+		}
+
+		// :UI rendering
+		// IMPORTANT: STUDY THIS PART A LOT WHEN I HAVE TIME
+		{
+			float width = 240.0;
+			float height = 135.0;
+			draw_frame.camera_xform = m4_scalar(1.0);
+			draw_frame.projection = m4_make_orthographic_projection(0.0, width, 0.0, height, -1, 10);
+
+			// :inventory ui
+			
+			if (is_key_just_pressed(KEY_TAB)) {
+				consume_key_just_pressed(KEY_TAB);
+				world->ux_state = (world->ux_state == UX_inventory ? UX_nil : UX_inventory);
+			}
+			world->inventory_alpha_target = (world->ux_state == UX_inventory ? 1.0 : 0.0);
+			animate_f32_to_target(&world->inventory_alpha, world->inventory_alpha_target, delta, 15.0, 0.0);
+			bool is_inventory_enabled = world->inventory_alpha_target == 1.0;
+
+
+			if (world->inventory_alpha_target != 0.0)
+			{
+
+				float y_pos = 70.0;
+
+				int item_count = 0;
+				for (int i = 0; i < ARCH_MAX; i++)
+				{
+					ItemData *item = &world->inventory_items[i];
+					if (item->amount > 0)
+					{
+						item_count += 1;
+					}
+				}
+
+				const float icon_thing = 8.0;
+				float icon_width = icon_thing;
+
+				const int icon_row_count = 8;
+
+				float entire_thing_width_idk = icon_row_count * icon_width;
+				float x_start_pos = (width / 2.0) - (entire_thing_width_idk / 2.0);
+
+				// bg box rendering thing
+				{
+					Matrix4 xform = m4_identity;
+					xform = m4_translate(xform, v3(x_start_pos, y_pos, 0.0));
+					draw_rect_xform(xform, v2(entire_thing_width_idk, icon_width), bg_box_col);
+				}
+
+				int slot_index = 0;
+				for (int i = 0; i < ARCH_MAX; i++)
+				{
+					ItemData *item = &world->inventory_items[i];
+					if (item->amount > 0)
+					{
+
+						float slot_index_offset = slot_index * icon_width;
+
+						Matrix4 xform = m4_scalar(1.0);
+						xform = m4_translate(xform, v3(x_start_pos + slot_index_offset, y_pos, 0.0));
+
+						Sprite *sprite = get_sprite(get_sprite_id_from_archetype(i));
+
+						float is_selected_alpha = 0.0;
+
+						Draw_Quad *quad = draw_rect_xform(xform, v2(8, 8), v4(1, 1, 1, 0.2));
+						Range2f icon_box = quad_to_range(*quad);
+						if (range2f_contains(icon_box, get_mouse_pos_in_ndc()))
+						{
+							is_selected_alpha = 1.0;
+						}
+
+						Matrix4 box_bottom_right_xform = xform;
+
+						xform = m4_translate(xform, v3(icon_width * 0.5, icon_width * 0.5, 0.0));
+
+						if (is_selected_alpha == 1.0)
+						{
+							float scale_adjust = 0.3; // 0.1 * sin_breathe(os_get_current_time_in_seconds(), 20.0);
+							xform = m4_scale(xform, v3(1 + scale_adjust, 1 + scale_adjust, 1));
+						}
+						{
+							// could also rotate ...
+							// float adjust = PI32 * 2.0 * sin_breathe(os_get_current_time_in_seconds(), 1.0);
+							// xform = m4_rotate_z(xform, adjust);
+						}
+						xform = m4_translate(xform, v3(get_sprite_size(sprite).x * -0.5, get_sprite_size(sprite).y * -0.5, 0));
+
+						draw_image_xform(sprite->image, xform, get_sprite_size(sprite), COLOR_WHITE);
+
+						// draw_text_xform(font, STR("5"), font_height, box_bottom_right_xform, v2(0.1, 0.1), COLOR_WHITE);
+
+						// tooltip
+						if (is_selected_alpha == 1.0)
+						{
+							Draw_Quad screen_quad = ndc_quad_to_screen_quad(*quad);
+							Range2f screen_range = quad_to_range(screen_quad);
+							Vector2 icon_center = range2f_get_center(screen_range);
+
+							// icon_center
+							Matrix4 xform = m4_scalar(1.0);
+
+							// TODO - we're guessing at the Y box size here.
+							// in order to automate this, we would need to move it down below after we do all the element advance things for the text.
+							// ... but then the box would be drawing in front of everyone. So we'd have to do Z sorting.
+							// Solution for now is to just guess at the size and OOGA BOOGA.
+							Vector2 box_size = v2(40, 14);
+
+							// xform = m4_pivot_box(xform, box_size, PIVOT_top_center);
+							xform = m4_translate(xform, v3(box_size.x * -0.5, -box_size.y - icon_width * 0.5, 0));
+							xform = m4_translate(xform, v3(icon_center.x, icon_center.y, 0));
+							draw_rect_xform(xform, box_size, bg_box_col);
+
+							float current_y_pos = icon_center.y;
+							{
+								string title = get_archetype_pretty_name(i);
+								Gfx_Text_Metrics metrics = measure_text(font, title, font_height, v2(0.1, 0.1));
+								Vector2 draw_pos = icon_center;
+								draw_pos = v2_sub(draw_pos, metrics.visual_pos_min);
+								draw_pos = v2_add(draw_pos, v2_mul(metrics.visual_size, v2(-0.5, -1.0))); // top center
+
+								draw_pos = v2_add(draw_pos, v2(0, icon_width * -0.5));
+								draw_pos = v2_add(draw_pos, v2(0, -2.0)); // padding
+
+								draw_text(font, title, font_height, draw_pos, v2(0.1, 0.1), COLOR_WHITE);
+
+								current_y_pos = draw_pos.y;
+							}
+
+							{
+								string text = STR("x%i");
+								text = sprint(get_temporary_allocator(), text, item->amount);
+
+								Gfx_Text_Metrics metrics = measure_text(font, text, font_height, v2(0.1, 0.1));
+								Vector2 draw_pos = v2(icon_center.x, current_y_pos);
+								draw_pos = v2_sub(draw_pos, metrics.visual_pos_min);
+								draw_pos = v2_add(draw_pos, v2_mul(metrics.visual_size, v2(-0.5, -1.0))); // top center
+
+								draw_pos = v2_add(draw_pos, v2(0, -2.0)); // padding
+
+								draw_text(font, text, font_height, draw_pos, v2(0.1, 0.1), COLOR_WHITE);
+							}
+						}
+						slot_index += 1;
+					}
 				}
 			}
 		}
